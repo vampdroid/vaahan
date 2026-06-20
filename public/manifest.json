@@ -1,0 +1,21 @@
+{
+  "short_name": "Vaahan",
+  "name": "Vaahan Vehicle Management",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#fbf8ff",
+  "theme_color": "#131939",
+  "display": "standalone",
+  "orientation": "portrait"
+}

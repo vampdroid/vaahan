@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #fbf8ff; /* bg-surface / background */
+    color: #1b1b24; /* text-on-surface */
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* Custom toggle styles to override forms plugin defaults and use brand colors */
+  .brand-toggle {
+    appearance: none;
+    width: 44px;
+    height: 24px;
+    background-color: #c7c5cf; /* outline-variant */
+    border-radius: 9999px;
+    position: relative;
+    cursor: pointer;
+    outline: none;
+    transition: background-color 0.2s ease-in-out;
+    margin: 0;
+    border: none;
+    background-image: none !important;
+  }
+  
+  .brand-toggle::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.2s ease-in-out;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  
+  .brand-toggle:checked {
+    background-color: #E8690B; /* Saffron Orange / Secondary Container */
+  }
+  
+  .brand-toggle:checked::before {
+    transform: translateX(20px);
+  }
+  
+  .brand-toggle:focus-visible {
+    box-shadow: 0 0 0 2px #f8f9fb, 0 0 0 4px #131939;
+  }
+
+  /* Level 1 Card Shadow */
+  .shadow-ambient-lvl1 {
+    box-shadow: 0px 4px 12px rgba(26, 60, 110, 0.05);
+  }
+
+  .shadow-active {
+    box-shadow: 0 8px 20px rgba(26, 60, 110, 0.10);
+  }
+
+  .pastel-gradient {
+    background: linear-gradient(135deg, #F9F9FF 0%, #E9E9FF 100%);
+  }
+
+  .card-shadow {
+    box-shadow: 0 8px 32px -4px rgba(45, 45, 95, 0.05);
+  }
+
+  /* Custom styling for material icons */
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+  }
+  
+  .material-symbols-outlined.icon-fill,
+  .material-symbols-outlined.filled {
+    font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar for horizontal lists */
+  .hide-scrollbar::-webkit-scrollbar,
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .hide-scrollbar,
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
