@@ -364,8 +364,18 @@ const mockSupabase = {
   }
 };
 
-export const supabase = (supabaseUrl && supabaseAnonKey)
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : mockSupabase;
+let client;
+try {
+  if (supabaseUrl && supabaseAnonKey && supabaseUrl.startsWith('http')) {
+    client = createClient(supabaseUrl, supabaseAnonKey);
+  } else {
+    console.warn("Supabase credentials missing or invalid format. Using mockSupabase fallback.");
+    client = mockSupabase;
+  }
+} catch (err) {
+  console.error("Failed to initialize real Supabase client. Falling back to mockSupabase.", err);
+  client = mockSupabase;
+}
 
+export const supabase = client;
 export default supabase;
