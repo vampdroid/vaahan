@@ -13,6 +13,7 @@ import MileageSessions from './views/MileageSessions';
 import DocumentVault from './views/DocumentVault';
 import Reminders from './views/Reminders';
 import Profile from './views/Profile';
+import OdometerHistory from './views/OdometerHistory';
 
 export function App() {
   return (
@@ -30,6 +31,7 @@ export function App() {
           <Route path="/vehicles/:id/puc-history" element={<PUCHistory />} />
           <Route path="/vehicles/:id/mileage" element={<MileageSessions />} />
           <Route path="/vehicles/:id/documents" element={<DocumentVault />} />
+          <Route path="/vehicles/:id/odometer-logs" element={<OdometerHistory />} />
           <Route path="/reminders" element={<Reminders />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="*" element={<Navigate to="/" replace />} />

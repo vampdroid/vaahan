@@ -23,12 +23,48 @@ export function DocumentVault() {
   const [formError, setFormError] = useState('');
 
   // Storage Quota Stats
-  const [usedSpace, setUsedSpace] = useState(380 * 1024); // mock starting space (380 KB)
-  const quotaLimit = 1024 * 1024 * 1024; // 1 GB in bytes
+  const [usedSpace, setUsedSpace] = useState(0); 
+  const quotaLimit = 25 * 1024 * 1024; // 25 MB cap in bytes
+
+  // Preview Modal State
+  const [selectedPreviewDoc, setSelectedPreviewDoc] = useState(null);
 
   useEffect(() => {
     fetchVehicleAndDocs();
   }, [id]);
+
+  // Helper to fetch total space used across ALL vehicles of the current user
+  const calculateTotalUserSpace = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userId = session?.user?.id || 'mock-user';
+
+      // 1. Get all vehicles of this user
+      const { data: userVehicles, error: vError } = await supabase
+        .from('vehicles')
+        .select('id')
+        .eq('user_id', userId);
+
+      if (vError) throw vError;
+      if (!userVehicles || userVehicles.length === 0) return 0;
+
+      const vehicleIds = userVehicles.map(v => v.id);
+
+      // 2. Fetch all document sizes belonging to these vehicles
+      const { data: allDocs, error: dError } = await supabase
+        .from('document_vault')
+        .select('file_size')
+        .in('vehicle_id', vehicleIds);
+
+      if (dError) throw dError;
+
+      const totalSize = (allDocs || []).reduce((acc, curr) => acc + (Number(curr.file_size) || 0), 0);
+      return totalSize;
+    } catch (err) {
+      console.error("Error calculating total user space:", err);
+      return 0;
+    }
+  };
 
   const fetchVehicleAndDocs = async () => {
     setLoading(true);
@@ -43,7 +79,7 @@ export function DocumentVault() {
         return;
       }
 
-      // Fetch documents
+      // Fetch documents for this specific vehicle
       const { data: docsData, error: dError } = await supabase
         .from('document_vault')
         .select('*')
@@ -52,8 +88,8 @@ export function DocumentVault() {
       if (dError) throw dError;
       setDocuments(docsData || []);
 
-      // Calculate total size of docs
-      const totalSize = (docsData || []).reduce((acc, curr) => acc + (curr.file_size || 0), 380 * 1024);
+      // Calculate total used space across ALL vehicles of the user
+      const totalSize = await calculateTotalUserSpace();
       setUsedSpace(totalSize);
     } catch (err) {
       console.error("Error loading document vault:", err);
@@ -85,6 +121,15 @@ export function DocumentVault() {
 
     setFormError('');
     try {
+      const sizeToVerify = fileSize || Math.floor(50 * 1024 + Math.random() * 200 * 1024);
+      const currentTotalUsed = await calculateTotalUserSpace();
+
+      // Enforce the 25 MB storage cap
+      if (currentTotalUsed + sizeToVerify > quotaLimit) {
+        setFormError(`Upload failed. Your total document storage across all vehicles cannot exceed 25 MB. (Currently used: ${formatSize(currentTotalUsed)})`);
+        return;
+      }
+
       // Mock uploading to Supabase Storage / base64 string
       const fileUrl = selectedFile 
         ? URL.createObjectURL(selectedFile)
@@ -95,7 +140,7 @@ export function DocumentVault() {
         name: docName.trim(),
         file_url: fileUrl,
         file_type: fileType,
-        file_size: fileSize || Math.floor(50 * 1024 + Math.random() * 200 * 1024), // mock size between 50KB and 250KB if no file selected
+        file_size: sizeToVerify,
         expiry_date: expiryDate || null
       };
 
@@ -103,7 +148,7 @@ export function DocumentVault() {
       const { error: dError } = await supabase.from('document_vault').insert(newDoc);
       if (dError) throw dError;
 
-      // 2. If it is PUC or Insurance, let us optionally update the vehicle expiry dates!
+      // 2. If it is PUC or Insurance, optionally update the vehicle expiry dates!
       const updateData = {};
       if (docName.toLowerCase().includes('puc') && expiryDate) {
         updateData.puc_expiry_date = expiryDate;
@@ -193,14 +238,14 @@ export function DocumentVault() {
           <div className="flex justify-between items-center">
             <h3 className="font-label-lg text-label-lg text-primary font-bold">Storage Quota</h3>
             <span className="font-label-sm text-label-sm text-on-surface-variant font-semibold">
-              {formatSize(usedSpace)} of 1 GB used
+              {formatSize(usedSpace)} of 25 MB used
             </span>
           </div>
           
           <div className="w-full bg-outline-variant/30 h-2.5 rounded-full overflow-hidden">
             <div 
               className="bg-secondary h-full rounded-full transition-all duration-500" 
-              style={{ width: `${Math.max(2, quotaPercent)}%` }}
+              style={{ width: `${Math.max(2, Math.min(100, quotaPercent))}%` }}
             ></div>
           </div>
         </section>
@@ -228,12 +273,11 @@ export function DocumentVault() {
               }
 
               return (
-                <a 
+                <button 
                   key={doc.id}
-                  href={doc.file_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`${cardBg} rounded-xl p-4 shadow-ambient-lvl1 flex flex-col items-center justify-center gap-3 border ${borderClass} relative overflow-hidden group hover:bg-surface-container-low active:scale-95 transition-all text-center min-h-[135px]`}
+                  type="button"
+                  onClick={() => setSelectedPreviewDoc(doc)}
+                  className={`${cardBg} rounded-xl p-4 shadow-ambient-lvl1 flex flex-col items-center justify-center gap-3 border ${borderClass} relative overflow-hidden group hover:bg-surface-container-low active:scale-95 transition-all text-center min-h-[135px] w-full`}
                 >
                   <div className="absolute top-2 right-2">
                     <span className={`${status.class} font-label-sm text-label-sm px-2 py-0.5 rounded-full font-semibold`}>
@@ -261,7 +305,7 @@ export function DocumentVault() {
                       {formatSize(doc.file_size)}
                     </span>
                   </div>
-                </a>
+                </button>
               );
             })}
 
@@ -281,11 +325,11 @@ export function DocumentVault() {
 
       {/* Add Document Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-primary/40 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div className="fixed inset-0 bg-primary/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0" onClick={() => setShowAddModal(false)}></div>
           <form 
             onSubmit={handleUpload}
-            className="bg-surface text-on-surface w-[320px] rounded-xl p-5 shadow-2xl relative z-10 flex flex-col gap-4"
+            className="bg-surface text-on-surface w-[320px] rounded-xl p-5 shadow-2xl relative z-10 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
           >
             <div className="flex justify-between items-center border-b border-outline-variant/30 pb-2">
               <h3 className="font-headline-md text-headline-md text-primary font-bold">Upload Document</h3>
@@ -330,7 +374,7 @@ export function DocumentVault() {
                     {selectedFile ? selectedFile.name : 'Select PDF or Image'}
                   </span>
                   <span className="font-label-sm text-label-sm text-on-surface-variant opacity-75">
-                    {selectedFile ? formatSize(selectedFile.size) : 'Max size 10MB'}
+                    {selectedFile ? formatSize(selectedFile.size) : 'Max size 25MB total limit'}
                   </span>
                   <input 
                     type="file"
@@ -351,6 +395,83 @@ export function DocumentVault() {
               Upload Document
             </button>
           </form>
+        </div>
+      )}
+
+      {/* Document Preview Modal */}
+      {selectedPreviewDoc && (
+        <div className="fixed inset-0 bg-primary/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0" onClick={() => setSelectedPreviewDoc(null)}></div>
+          <div className="bg-surface text-on-surface w-full max-w-[500px] border border-outline-variant/30 rounded-2xl p-5 shadow-2xl relative z-10 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-outline-variant/30 pb-2">
+              <div className="flex flex-col">
+                <h3 className="font-headline-md text-headline-md text-primary font-bold truncate max-w-[280px]">
+                  {selectedPreviewDoc.name}
+                </h3>
+                <span className="font-label-sm text-label-sm text-on-surface-variant mt-0.5">
+                  Size: {formatSize(selectedPreviewDoc.file_size)}
+                </span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setSelectedPreviewDoc(null)}
+                className="p-1 rounded-full hover:bg-surface-container-high"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            {/* Preview Area */}
+            <div className="flex-grow flex justify-center items-center bg-surface-container-lowest border border-outline-variant rounded-xl p-3 min-h-[300px] max-h-[60vh] overflow-hidden">
+              {['pdf'].includes(selectedPreviewDoc.file_type?.toLowerCase()) ? (
+                <iframe 
+                  src={selectedPreviewDoc.file_url} 
+                  className="w-full h-[50vh] border-0" 
+                  title={selectedPreviewDoc.name}
+                />
+              ) : ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(selectedPreviewDoc.file_type?.toLowerCase()) || selectedPreviewDoc.file_url?.startsWith('data:image/') || selectedPreviewDoc.file_url?.includes('documents/') ? (
+                <img 
+                  src={selectedPreviewDoc.file_url} 
+                  alt={selectedPreviewDoc.name} 
+                  className="max-w-full max-h-[50vh] object-contain rounded-lg"
+                  onError={(e) => {
+                    // Fallback to iframe if image load fails
+                    e.target.style.display = 'none';
+                    const parent = e.target.parentElement;
+                    const frame = document.createElement('iframe');
+                    frame.src = selectedPreviewDoc.file_url;
+                    frame.className = "w-full h-[50vh] border-0";
+                    parent.appendChild(frame);
+                  }}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center p-6 text-center select-none text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[48px] opacity-40 mb-2">description</span>
+                  <p className="font-body-md text-body-md">In-app preview not available for this file type.</p>
+                  <p className="font-label-sm text-label-sm mt-0.5">({selectedPreviewDoc.file_type?.toUpperCase()})</p>
+                </div>
+              )}
+            </div>
+
+            {/* Actions Bar */}
+            <div className="flex gap-3 justify-end mt-2">
+              <a 
+                href={selectedPreviewDoc.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2.5 rounded-xl border border-outline-variant font-label-sm text-label-sm font-bold hover:bg-surface-container-high transition-all text-on-surface flex items-center gap-1 shadow-sm select-none"
+              >
+                <span className="material-symbols-outlined text-[16px]">open_in_new</span> Open in New Tab
+              </a>
+              <a 
+                href={selectedPreviewDoc.file_url}
+                download={selectedPreviewDoc.name}
+                className="px-5 py-2.5 rounded-xl bg-[#E8690B] text-white font-label-sm text-label-sm font-bold hover:bg-[#D55F09] active:scale-95 transition-all flex items-center gap-1 shadow-md select-none"
+              >
+                <span className="material-symbols-outlined text-[16px]">download</span> Download
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </div>

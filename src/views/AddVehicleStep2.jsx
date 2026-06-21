@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import supabase from '../services/supabase';
 import TopAppBar from '../components/TopAppBar';
-import { getDistanceUnit } from '../services/utils';
+import { useApp } from '../context/AppContext';
 
 export function AddVehicleStep2() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isFetched = searchParams.get('fetched') === 'true';
+  const { refreshVehicles } = useApp();
 
   // State fields
   const [regNumber, setRegNumber] = useState('');
@@ -15,25 +16,24 @@ export function AddVehicleStep2() {
   const [vehicleType, setVehicleType] = useState('scooter'); // 'scooter' | 'car'
   const [nickname, setNickname] = useState('');
   const [odometer, setOdometer] = useState('');
-  const [weeklyKm, setWeeklyKm] = useState(''); // optional weekly km driven
-  
-  // Service Reminder setup
-  const [serviceReminderType, setServiceReminderType] = useState('odometer'); // 'odometer' | 'date' | 'both' | 'none'
-  const [serviceDueOdometer, setServiceDueOdometer] = useState('');
-  const [serviceDueDate, setServiceDueDate] = useState('');
-
-  // Oil Change Reminder setup
-  const [oilReminderType, setOilReminderType] = useState('odometer'); // 'odometer' | 'date' | 'both' | 'none'
-  const [oilDueOdometer, setOilDueOdometer] = useState('');
-  const [oilDueDate, setOilDueDate] = useState('');
-
+  const [estDailyKm, setEstDailyKm] = useState('');
+  const [estWeeklyKm, setEstWeeklyKm] = useState('');
   const [pucExpiryDate, setPucExpiryDate] = useState('');
   const [insuranceExpiryDate, setInsuranceExpiryDate] = useState('');
+  const [serviceDueOdometer, setServiceDueOdometer] = useState('');
+  const [selectedColor, setSelectedColor] = useState('#1a3c6e'); // Deep Blue
   
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const unit = getDistanceUnit();
+  const colors = [
+    { name: 'Navy', hex: '#1a3c6e' },
+    { name: 'Indigo', hex: '#4546d8' },
+    { name: 'Orange', hex: '#E8690B' },
+    { name: 'Teal', hex: '#00695C' },
+    { name: 'Red', hex: '#ba1a1a' },
+    { name: 'Black', hex: '#1b1b24' }
+  ];
 
   useEffect(() => {
     if (isFetched) {
@@ -41,12 +41,12 @@ export function AddVehicleStep2() {
       if (fetchedDataStr) {
         try {
           const data = JSON.parse(fetchedDataStr);
-          setRegNumber(data.registration_number ? data.registration_number.toUpperCase().replace(/\s+/g, '') : '');
+          setRegNumber(data.registration_number || '');
           setModelName(data.model_name || '');
           setVehicleType(data.vehicle_type || 'scooter');
+          setSelectedColor(data.color || '#1a3c6e');
           if (data.current_odometer) {
-            const converted = unit === 'mi' ? Math.round(Number(data.current_odometer) / 1.60934) : data.current_odometer;
-            setOdometer(converted.toString());
+            setOdometer(data.current_odometer.toString());
           }
           if (data.puc_expiry_date) {
             setPucExpiryDate(data.puc_expiry_date);
@@ -59,19 +59,14 @@ export function AddVehicleStep2() {
         }
       }
     }
-  }, [isFetched, unit]);
+  }, [isFetched]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const cleanReg = regNumber.toUpperCase().replace(/\s+/g, '');
-    
-    // Front-end validation for registration plate
-    const regPattern = /^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$/;
-    if (!regPattern.test(cleanReg)) {
-      setErrorMsg("Please enter a valid registration number (e.g. GJ01VA1873).");
+    if (!regNumber.trim()) {
+      setErrorMsg("Please provide a valid registration number.");
       return;
     }
-
     if (!modelName.trim()) {
       setErrorMsg("Please provide the Make & Model name.");
       return;
@@ -87,52 +82,36 @@ export function AddVehicleStep2() {
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id || 'mock-user';
 
-      // 1. Uniqueness check for vehicle registration number
-      const { data: existing, error: checkError } = await supabase
-        .from('vehicles')
-        .select('id')
-        .eq('registration_number', cleanReg)
-        .maybeSingle();
-
-      if (checkError) {
-        console.error("Uniqueness check error:", checkError);
-      }
-      if (existing) {
-        setErrorMsg(`A vehicle with registration number ${cleanReg} already exists in your garage.`);
-        setLoading(false);
-        return;
-      }
-
-      // Calculate next due values based on settings selected
-      const isSvcOdo = serviceReminderType === 'odometer' || serviceReminderType === 'both';
-      const isSvcDate = serviceReminderType === 'date' || serviceReminderType === 'both';
-      const isOilOdo = oilReminderType === 'odometer' || oilReminderType === 'both';
-      const isOilDate = oilReminderType === 'date' || oilReminderType === 'both';
-
       const newVehicle = {
         user_id: userId,
-        registration_number: cleanReg,
+        registration_number: regNumber.trim().toUpperCase(),
         model_name: modelName,
         vehicle_type: vehicleType,
         nickname: nickname.trim() || modelName,
-        current_odometer: unit === 'mi' ? Math.round(parseFloat(odometer) * 1.60934) : parseFloat(odometer),
-        color: '#E8690B', // Default standard Orange accent color
+        current_odometer: parseFloat(odometer),
+        color: selectedColor,
         puc_expiry_date: pucExpiryDate || null,
         insurance_expiry_date: insuranceExpiryDate || null,
-        weekly_km_driven: weeklyKm ? (unit === 'mi' ? Math.round(parseFloat(weeklyKm) * 1.60934) : parseFloat(weeklyKm)) : null,
-        
-        // Reminder Settings
-        service_reminder_type: serviceReminderType,
-        service_due_odometer: isSvcOdo && serviceDueOdometer ? (unit === 'mi' ? Math.round(parseFloat(serviceDueOdometer) * 1.60934) : parseFloat(serviceDueOdometer)) : null,
-        service_due_date: isSvcDate && serviceDueDate ? serviceDueDate : null,
-        
-        oil_reminder_type: oilReminderType,
-        oil_due_odometer: isOilOdo && oilDueOdometer ? (unit === 'mi' ? Math.round(parseFloat(oilDueOdometer) * 1.60934) : parseFloat(oilDueOdometer)) : null,
-        oil_due_date: isOilDate && oilDueDate ? oilDueDate : null
+        service_due_odometer: serviceDueOdometer ? parseFloat(serviceDueOdometer) : null,
+        est_daily_km: estDailyKm ? parseFloat(estDailyKm) : 0,
+        est_weekly_km: estWeeklyKm ? parseFloat(estWeeklyKm) : 0
       };
 
-      const { data, error } = await supabase.from('vehicles').insert(newVehicle);
+      const { data, error } = await supabase.from('vehicles').insert(newVehicle).select();
       if (error) throw error;
+
+      // Seed baseline odometer log
+      const insertedVehicle = data ? (Array.isArray(data) ? data[0] : data) : null;
+      const createdVehicleId = insertedVehicle?.id;
+      if (createdVehicleId) {
+        await supabase.from('odometer_logs').insert({
+          vehicle_id: createdVehicleId,
+          value: parseFloat(odometer),
+          logged_at: new Date().toISOString()
+        });
+      }
+
+      await refreshVehicles();
       
       // Clean up session storage
       sessionStorage.removeItem('temp_vehicle_fetch');
@@ -148,7 +127,7 @@ export function AddVehicleStep2() {
   };
 
   return (
-    <div className="bg-surface text-on-surface w-full max-w-[768px] mx-auto min-h-screen relative flex flex-col font-body">
+    <div className="bg-surface text-on-surface w-full max-w-[768px] mx-auto min-h-screen relative flex flex-col font-body pb-[80px]">
       <TopAppBar 
         title="Add Vehicle details" 
         showBack={true} 
@@ -175,7 +154,7 @@ export function AddVehicleStep2() {
           {/* Model name */}
           <div className="flex flex-col gap-1">
             <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">
-              Make & Model
+              Make &amp; Model
             </label>
             <input 
               type="text"
@@ -196,7 +175,7 @@ export function AddVehicleStep2() {
                 onClick={() => setVehicleType('scooter')}
                 className={`py-3 rounded-xl border flex items-center justify-center gap-2 font-label-lg text-label-lg font-bold transition-all ${
                   vehicleType === 'scooter'
-                    ? 'bg-primary-container text-on-primary-container border-primary-container shadow-sm'
+                    ? 'bg-[#131939] text-white border-[#131939] shadow-sm'
                     : 'bg-surface border-outline-variant text-on-surface-variant hover:bg-surface-container-low'
                 }`}
               >
@@ -208,7 +187,7 @@ export function AddVehicleStep2() {
                 onClick={() => setVehicleType('car')}
                 className={`py-3 rounded-xl border flex items-center justify-center gap-2 font-label-lg text-label-lg font-bold transition-all ${
                   vehicleType === 'car'
-                    ? 'bg-primary-container text-on-primary-container border-primary-container shadow-sm'
+                    ? 'bg-[#131939] text-white border-[#131939] shadow-sm'
                     : 'bg-surface border-outline-variant text-on-surface-variant hover:bg-surface-container-low'
                 }`}
               >
@@ -232,10 +211,10 @@ export function AddVehicleStep2() {
             />
           </div>
 
-          {/* Current Odometer (Always customizable) */}
+          {/* Current Odometer */}
           <div className="flex flex-col gap-1">
             <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">
-              Current Odometer ({unit})
+              Current Odometer (km)
             </label>
             <input 
               type="number"
@@ -247,16 +226,30 @@ export function AddVehicleStep2() {
             />
           </div>
 
-          {/* Weekly KM Driven (Optional) */}
+          {/* Estimated Daily Usage */}
           <div className="flex flex-col gap-1">
             <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">
-              Weekly Distance Driven ({unit}) (Optional)
+              Estimated Daily Usage (km) (Optional)
             </label>
             <input 
               type="number"
-              placeholder="e.g. 150"
-              value={weeklyKm}
-              onChange={(e) => setWeeklyKm(e.target.value)}
+              placeholder="e.g. 20"
+              value={estDailyKm}
+              onChange={(e) => setEstDailyKm(e.target.value)}
+              className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all placeholder:text-outline shadow-sm"
+            />
+          </div>
+
+          {/* Estimated Weekly Usage */}
+          <div className="flex flex-col gap-1">
+            <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">
+              Estimated Weekly Usage (km) (Optional)
+            </label>
+            <input 
+              type="number"
+              placeholder="e.g. 120"
+              value={estWeeklyKm}
+              onChange={(e) => setEstWeeklyKm(e.target.value)}
               className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all placeholder:text-outline shadow-sm"
             />
           </div>
@@ -287,101 +280,52 @@ export function AddVehicleStep2() {
             />
           </div>
 
-          {/* General Service Reminder Settings */}
-          <div className="flex flex-col gap-2 border-t border-outline-variant/30 pt-3 mt-1">
-            <h4 className="font-headline-md text-headline-md text-primary font-bold">General Service Reminder</h4>
-            
-            <div className="flex flex-col gap-1">
-              <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Reminder Type</label>
-              <select 
-                value={serviceReminderType}
-                onChange={(e) => setServiceReminderType(e.target.value)}
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-2.5 font-body-md text-body-md text-on-surface focus:border-primary-container outline-none shadow-sm"
-              >
-                <option value="odometer">Odometer-based (Distance)</option>
-                <option value="date">Date-based (Time)</option>
-                <option value="both">Both (Whichever is earlier)</option>
-                <option value="none">No Reminder</option>
-              </select>
-            </div>
-
-            {(serviceReminderType === 'odometer' || serviceReminderType === 'both') && (
-              <div className="flex flex-col gap-1">
-                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Next Service Due Odometer ({unit})</label>
-                <input 
-                  type="number"
-                  placeholder={`e.g. ${unit === 'mi' ? '12000' : '20000'}`}
-                  value={serviceDueOdometer}
-                  onChange={(e) => setServiceDueOdometer(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all placeholder:text-outline shadow-sm"
-                  required
-                />
-              </div>
-            )}
-
-            {(serviceReminderType === 'date' || serviceReminderType === 'both') && (
-              <div className="flex flex-col gap-1">
-                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Next Service Due Date</label>
-                <input 
-                  type="date"
-                  value={serviceDueDate}
-                  onChange={(e) => setServiceDueDate(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all shadow-sm"
-                  required
-                />
-              </div>
-            )}
+          {/* Next Service Due */}
+          <div className="flex flex-col gap-1">
+            <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">
+              Next Service Due Odometer (km) (Optional)
+            </label>
+            <input 
+              type="number"
+              placeholder="e.g. 20000"
+              value={serviceDueOdometer}
+              onChange={(e) => setServiceDueOdometer(e.target.value)}
+              className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all placeholder:text-outline shadow-sm"
+            />
           </div>
 
-          {/* Engine Oil Reminder Settings */}
-          <div className="flex flex-col gap-2 border-t border-outline-variant/30 pt-3 mt-1">
-            <h4 className="font-headline-md text-headline-md text-primary font-bold">Engine Oil Reminder</h4>
-            
-            <div className="flex flex-col gap-1">
-              <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Reminder Type</label>
-              <select 
-                value={oilReminderType}
-                onChange={(e) => setOilReminderType(e.target.value)}
-                className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-2.5 font-body-md text-body-md text-on-surface focus:border-primary-container outline-none shadow-sm"
-              >
-                <option value="odometer">Odometer-based (Distance)</option>
-                <option value="date">Date-based (Time)</option>
-                <option value="both">Both (Whichever is earlier)</option>
-                <option value="none">No Reminder</option>
-              </select>
+          {/* Color selector */}
+          <div className="flex flex-col gap-3">
+            <span className="font-label-lg text-label-lg text-on-surface font-bold">Vehicle Paint Color</span>
+            <div className="flex gap-4">
+              {colors.map((c) => {
+                const isSelected = selectedColor === c.hex;
+                return (
+                  <button
+                    key={c.hex}
+                    type="button"
+                    onClick={() => setSelectedColor(c.hex)}
+                    className="w-10 h-10 rounded-full border shadow-sm relative transition-transform active:scale-95"
+                    style={{ 
+                      backgroundColor: c.hex,
+                      borderColor: isSelected ? '#131939' : '#c7c5cf',
+                      borderWidth: isSelected ? '3px' : '1px',
+                      transform: isSelected ? 'scale(1.15)' : 'scale(1)'
+                    }}
+                  >
+                    {isSelected && (
+                      <span className="material-symbols-outlined text-white text-[20px] absolute inset-0 m-auto flex items-center justify-center">
+                        check
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-
-            {(oilReminderType === 'odometer' || oilReminderType === 'both') && (
-              <div className="flex flex-col gap-1">
-                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Next Oil Change Due Odometer ({unit})</label>
-                <input 
-                  type="number"
-                  placeholder={`e.g. ${unit === 'mi' ? '11000' : '18000'}`}
-                  value={oilDueOdometer}
-                  onChange={(e) => setOilDueOdometer(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all placeholder:text-outline shadow-sm"
-                  required
-                />
-              </div>
-            )}
-
-            {(oilReminderType === 'date' || oilReminderType === 'both') && (
-              <div className="flex flex-col gap-1">
-                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Next Oil Change Due Date</label>
-                <input 
-                  type="date"
-                  value={oilDueDate}
-                  onChange={(e) => setOilDueDate(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl px-4 py-3 font-body-lg text-body-lg text-on-surface focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 outline-none transition-all shadow-sm"
-                  required
-                />
-              </div>
-            )}
           </div>
 
           {errorMsg && <p className="text-error font-label-sm text-label-sm px-1 mt-1">{errorMsg}</p>}
 
-          {/* Confirm Button */}
           <button 
             type="submit"
             disabled={loading}

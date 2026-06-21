@@ -2,15 +2,40 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import supabase from '../services/supabase';
 import Vehicle3DModel from '../components/Vehicle3DModel';
-import { formatDate, formatDistance } from '../services/utils';
+import { useApp } from '../context/AppContext';
+import { formatDistance } from '../services/utils';
 
 export function VehicleDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { refreshVehicles } = useApp();
+
   const [vehicle, setVehicle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showLogSheet, setShowLogSheet] = useState(false);
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [reminders, setReminders] = useState([]);
+
+  // Edit form states
+  const [editNickname, setEditNickname] = useState('');
+  const [editModelName, setEditModelName] = useState('');
+  const [editRegNumber, setEditRegNumber] = useState('');
+  const [editEstDaily, setEditEstDaily] = useState('');
+  const [editEstWeekly, setEditEstWeekly] = useState('');
+  const [editColor, setEditColor] = useState('');
+  const [editType, setEditType] = useState('scooter');
+  const [editError, setEditError] = useState('');
+  const [updating, setUpdating] = useState(false);
+
+  const colorsList = [
+    { name: 'Navy', hex: '#1a3c6e' },
+    { name: 'Indigo', hex: '#4546d8' },
+    { name: 'Orange', hex: '#E8690B' },
+    { name: 'Teal', hex: '#00695C' },
+    { name: 'Red', hex: '#ba1a1a' },
+    { name: 'Black', hex: '#1b1b24' }
+  ];
 
   useEffect(() => {
     fetchVehicleDetails();
@@ -29,6 +54,15 @@ export function VehicleDetail() {
         const v = data[0];
         setVehicle(v);
         calculateReminders(v);
+        
+        // Populate edit form defaults
+        setEditNickname(v.nickname || '');
+        setEditModelName(v.model_name || '');
+        setEditRegNumber(v.registration_number || '');
+        setEditEstDaily(v.est_daily_km?.toString() || '0');
+        setEditEstWeekly(v.est_weekly_km?.toString() || '0');
+        setEditColor(v.color || '#1a3c6e');
+        setEditType(v.vehicle_type || 'scooter');
       } else {
         navigate('/dashboard');
       }
@@ -42,7 +76,6 @@ export function VehicleDetail() {
 
   const calculateReminders = (v) => {
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const tempReminders = [];
 
     // PUC Reminder
@@ -71,7 +104,7 @@ export function VehicleDetail() {
         tempReminders.push({
           type: 'puc',
           title: 'PUC Renewal',
-          desc: `Valid till ${formatDate(v.puc_expiry_date)}`,
+          desc: `Valid till ${new Date(v.puc_expiry_date).toLocaleDateString('en-GB').replace(/\//g, '-')}`,
           status: 'success',
           date: v.puc_expiry_date
         });
@@ -104,103 +137,39 @@ export function VehicleDetail() {
         tempReminders.push({
           type: 'insurance',
           title: 'Insurance Policy',
-          desc: `Valid till ${formatDate(v.insurance_expiry_date)}`,
+          desc: `Valid till ${new Date(v.insurance_expiry_date).toLocaleDateString('en-GB').replace(/\//g, '-')}`,
           status: 'success',
           date: v.insurance_expiry_date
         });
       }
     }
 
-    // General Service Reminder
-    const svcType = v.service_reminder_type || 'none';
-    if (svcType !== 'none') {
-      const isOdo = svcType === 'odometer' || svcType === 'both';
-      const isDate = svcType === 'date' || svcType === 'both';
-      let status = 'neutral';
-      let desc = '';
-
-      if (isOdo && v.service_due_odometer) {
-        const remainingKm = v.service_due_odometer - v.current_odometer;
-        if (remainingKm <= 0) {
-          status = 'danger';
-          desc = `Overdue by ${formatDistance(Math.abs(remainingKm))}`;
-        } else if (remainingKm <= 500) {
-          status = 'warning';
-          desc = `Due in ${formatDistance(remainingKm)}`;
-        } else {
-          desc = `Due at ${formatDistance(v.service_due_odometer)}`;
-        }
-      }
-
-      if (isDate && v.service_due_date && status !== 'danger') {
-        const diff = new Date(v.service_due_date) - today;
-        const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-        if (days <= 0) {
-          status = 'danger';
-          desc = 'Service is overdue!';
-        } else if (days <= 15) {
-          status = 'warning';
-          desc = `Service due in ${days} days`;
-        } else if (!desc) {
-          desc = `Due on ${formatDate(v.service_due_date)}`;
-        }
-      }
-
-      if (v.service_due_odometer || v.service_due_date) {
+    // Service Reminder
+    if (v.service_due_odometer) {
+      const remainingKm = v.service_due_odometer - v.current_odometer;
+      if (remainingKm <= 0) {
         tempReminders.push({
           type: 'service',
-          title: 'General Service',
-          desc: desc || 'Service due soon',
-          status: status,
-          odo: v.service_due_odometer,
-          date: v.service_due_date
+          title: 'Scheduled Service',
+          desc: `Overdue by ${Math.abs(remainingKm)} km`,
+          status: 'danger',
+          odo: v.service_due_odometer
         });
-      }
-    }
-
-    // Engine Oil Reminder
-    const oilType = v.oil_reminder_type || 'none';
-    if (oilType !== 'none') {
-      const isOdo = oilType === 'odometer' || oilType === 'both';
-      const isDate = oilType === 'date' || oilType === 'both';
-      let status = 'neutral';
-      let desc = '';
-
-      if (isOdo && v.oil_due_odometer) {
-        const remainingKm = v.oil_due_odometer - v.current_odometer;
-        if (remainingKm <= 0) {
-          status = 'danger';
-          desc = `Overdue by ${formatDistance(Math.abs(remainingKm))}`;
-        } else if (remainingKm <= 300) {
-          status = 'warning';
-          desc = `Due in ${formatDistance(remainingKm)}`;
-        } else {
-          desc = `Due at ${formatDistance(v.oil_due_odometer)}`;
-        }
-      }
-
-      if (isDate && v.oil_due_date && status !== 'danger') {
-        const diff = new Date(v.oil_due_date) - today;
-        const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-        if (days <= 0) {
-          status = 'danger';
-          desc = 'Oil change is overdue!';
-        } else if (days <= 10) {
-          status = 'warning';
-          desc = `Oil change due in ${days} days`;
-        } else if (!desc) {
-          desc = `Due on ${formatDate(v.oil_due_date)}`;
-        }
-      }
-
-      if (v.oil_due_odometer || v.oil_due_date) {
+      } else if (remainingKm <= 500) {
         tempReminders.push({
-          type: 'oil',
-          title: 'Engine Oil Change',
-          desc: desc || 'Oil replacement due soon',
-          status: status,
-          odo: v.oil_due_odometer,
-          date: v.oil_due_date
+          type: 'service',
+          title: 'Scheduled Service',
+          desc: `Due in ${remainingKm} km`,
+          status: 'warning',
+          odo: v.service_due_odometer
+        });
+      } else {
+        tempReminders.push({
+          type: 'service',
+          title: 'Scheduled Service',
+          desc: `Due at ${v.service_due_odometer.toLocaleString()} km`,
+          status: 'neutral',
+          odo: v.service_due_odometer
         });
       }
     }
@@ -238,15 +207,9 @@ export function VehicleDetail() {
           notes: 'Insurance Policy Renewal'
         });
       } else if (type === 'service') {
-        // Extend next service odometer by 5000 km, and date by 6 months
-        const nextServiceOdo = vehicle.current_odometer + 5000;
-        const nextServiceDate = new Date(today.getTime() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        updates = { 
-          service_due_odometer: nextServiceOdo,
-          service_due_date: nextServiceDate
-        };
+        const nextService = vehicle.current_odometer + 5000;
+        updates = { service_due_odometer: nextService };
         
-        // Log service entry
         await supabase.from('service_logs').insert({
           vehicle_id: id,
           entry_type: 'service',
@@ -256,24 +219,6 @@ export function VehicleDetail() {
           details: ['Regular Maintenance', 'General checkup'],
           notes: 'Authorized Service Station'
         });
-      } else if (type === 'oil') {
-        // Extend next oil change odometer by 3000 km, and date by 3 months
-        const nextOilOdo = vehicle.current_odometer + 3000;
-        const nextOilDate = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        updates = { 
-          oil_due_odometer: nextOilOdo,
-          oil_due_date: nextOilDate
-        };
-        
-        // Log oil entry
-        await supabase.from('service_logs').insert({
-          vehicle_id: id,
-          entry_type: 'oil_change',
-          date: today.toISOString().split('T')[0],
-          odometer: vehicle.current_odometer,
-          cost: 1200,
-          notes: 'Engine Oil Replacement'
-        });
       }
 
       const { error } = await supabase
@@ -282,9 +227,74 @@ export function VehicleDetail() {
         .eq('id', id);
 
       if (error) throw error;
+      await refreshVehicles();
       fetchVehicleDetails();
     } catch (err) {
       console.error("Error marking reminder done:", err);
+    }
+  };
+
+  const handleEditVehicle = async (e) => {
+    e.preventDefault();
+    if (!editModelName.trim()) {
+      setEditError("Please enter a model name.");
+      return;
+    }
+    setEditError('');
+    setUpdating(true);
+    try {
+      const updates = {
+        nickname: editNickname.trim() || editModelName.trim(),
+        model_name: editModelName.trim(),
+        registration_number: editRegNumber.trim().toUpperCase(),
+        est_daily_km: parseFloat(editEstDaily) || 0,
+        est_weekly_km: parseFloat(editEstWeekly) || 0,
+        color: editColor,
+        vehicle_type: editType
+      };
+
+      const { error } = await supabase
+        .from('vehicles')
+        .update(updates)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await refreshVehicles();
+      setShowEditModal(false);
+      fetchVehicleDetails();
+    } catch (err) {
+      console.error("Error editing vehicle details:", err);
+      setEditError("Could not update vehicle. Please try again.");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleDeleteVehicle = async () => {
+    const doubleCheck = window.confirm(
+      "Are you sure you want to delete this vehicle? This will permanently remove it from your garage along with all its documents and logs."
+    );
+    if (!doubleCheck) return;
+
+    try {
+      await supabase.from('document_vault').delete().eq('vehicle_id', id);
+      await supabase.from('service_logs').delete().eq('vehicle_id', id);
+      await supabase.from('mileage_logs').delete().eq('vehicle_id', id);
+      await supabase.from('odometer_logs').delete().eq('vehicle_id', id);
+
+      const { error } = await supabase
+        .from('vehicles')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await refreshVehicles();
+      navigate('/dashboard');
+    } catch (err) {
+      console.error("Error deleting vehicle:", err);
+      alert("Could not delete vehicle. Please try again.");
     }
   };
 
@@ -299,11 +309,11 @@ export function VehicleDetail() {
 
   return (
     <div className="bg-background text-on-background w-full max-w-[768px] mx-auto min-h-screen relative overflow-x-hidden flex flex-col shadow-xl">
-      {/* Header Panel (Light Premium/Glassmorphism Gradient) */}
-      <div className="relative h-[397px] bg-gradient-to-b from-[#f2f4f8] to-[#e2e6ed] text-primary rounded-b-[2rem] shadow-[0_8px_20px_rgba(26,60,110,0.08)] z-10 w-full overflow-hidden shrink-0">
+      {/* Header Panel (Top 40%) */}
+      <div className="relative h-[397px] bg-gradient-to-b from-[#f5f2ff] to-[#efecf9] text-on-surface rounded-b-[2rem] shadow-[0_4px_16px_rgba(26,60,110,0.08)] z-10 w-full overflow-hidden shrink-0">
         
         {/* 3D Model Render */}
-        <div className="absolute inset-0 w-full h-full opacity-100">
+        <div className="absolute inset-0 w-full h-full opacity-95">
           <Vehicle3DModel vehicleType={vehicle.vehicle_type} color={vehicle.color} />
         </div>
 
@@ -311,105 +321,131 @@ export function VehicleDetail() {
         <div className="relative flex justify-between items-center px-container-margin h-16 w-full z-20">
           <button 
             onClick={() => navigate('/dashboard')}
-            className="p-2 -ml-2 rounded-full hover:bg-surface-container-high/40 transition-colors active:scale-95 text-primary"
+            className="p-2 -ml-2 rounded-full hover:bg-surface-container-high/40 transition-colors active:scale-95 text-on-surface"
           >
             <span className="material-symbols-outlined">arrow_back</span>
           </button>
-          <h1 className="font-headline-md text-headline-md font-bold text-primary">Vaahan</h1>
-          <button 
-            onClick={() => navigate('/profile')}
-            className="p-2 -mr-2 rounded-full hover:bg-surface-container-high/40 transition-colors active:scale-95 text-primary"
-          >
-            <span className="material-symbols-outlined">settings</span>
-          </button>
+          <h1 className="font-headline-md text-headline-md font-bold text-primary select-none">Vaahan</h1>
+          
+          <div className="relative">
+            <button 
+              onClick={() => setShowActionsMenu(!showActionsMenu)}
+              className="p-2 -mr-2 rounded-full hover:bg-surface-container-high/40 transition-colors active:scale-95 text-on-surface"
+            >
+              <span className="material-symbols-outlined">more_vert</span>
+            </button>
+
+            {/* Dropdown Actions Menu */}
+            {showActionsMenu && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setShowActionsMenu(false)}></div>
+                <div className="absolute right-0 mt-2 w-48 bg-surface text-on-surface rounded-xl shadow-lg z-40 border border-outline-variant/30 py-1.5 animate-fadeIn">
+                  <button
+                    onClick={() => { setShowActionsMenu(false); setShowEditModal(true); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-surface-container-high font-label-md text-label-md flex items-center gap-2 text-primary font-semibold"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">edit</span>
+                    Edit Details
+                  </button>
+                  <button
+                    onClick={() => { setShowActionsMenu(false); handleDeleteVehicle(); }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-error-container/20 font-label-md text-label-md flex items-center gap-2 text-error font-semibold"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">delete</span>
+                    Delete Vehicle
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Vehicle Info Overlay */}
         <div className="absolute bottom-12 left-0 w-full px-container-margin z-20 flex flex-col items-start gap-stack-gap-sm">
-          <h2 className="font-display-lg text-display-lg text-primary select-none drop-shadow-sm font-extrabold">
+          <h2 className="font-display-lg text-display-lg text-primary font-bold select-none">
             {vehicle.nickname || vehicle.model_name}
           </h2>
           
           <div className="flex items-center gap-stack-gap-md w-full">
-            <div className="bg-surface/75 backdrop-blur-md px-4 py-1.5 rounded-full border border-outline-variant/30 shadow-sm">
-              <span className="font-label-lg text-label-lg tracking-widest text-primary uppercase font-bold">
+            <div className="bg-surface-container-high px-4 py-1.5 rounded-full border border-outline-variant/60 shadow-sm">
+              <span className="font-label-lg text-label-lg tracking-widest text-on-surface uppercase font-semibold">
                 {vehicle.registration_number}
               </span>
             </div>
-            <div className="flex items-center gap-1.5 bg-surface/75 backdrop-blur-md px-3 py-1.5 rounded-full border border-outline-variant/30 ml-auto shadow-sm">
-              <span className="material-symbols-outlined text-[16px] text-primary font-bold">speed</span>
-              <span className="font-label-sm text-label-sm text-primary font-extrabold">
+            <div 
+              onClick={() => navigate(`/vehicles/${id}/odometer-logs`)}
+              className="flex items-center gap-1.5 bg-surface-container-high hover:bg-surface-container-highest cursor-pointer px-3 py-1.5 rounded-full border border-outline-variant/60 ml-auto shadow-sm transition-all animate-pulse"
+            >
+              <span className="material-symbols-outlined text-[16px] text-primary">speed</span>
+              <span className="font-label-sm text-label-sm text-on-surface font-bold">
                 {formatDistance(vehicle.current_odometer || 0)}
               </span>
+              <span className="material-symbols-outlined text-[14px] text-on-surface-variant">chevron_right</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content Area (Bottom sliding over) */}
-      <div className="relative -mt-8 flex-grow bg-surface rounded-t-[2rem] z-20 px-container-margin pt-8 pb-12 flex flex-col gap-stack-gap-lg shadow-[0_-4px_24px_rgba(26,60,110,0.06)] rounded-b-xl">
-        {/* Drag Handle Decoration */}
+      {/* Main Content Area */}
+      <div className="relative -mt-8 flex-grow bg-surface rounded-t-[2rem] z-20 px-container-margin pt-8 pb-12 flex flex-col gap-stack-gap-lg shadow-[0_-4px_24px_rgba(26,60,110,0.1)] rounded-b-xl">
         <div className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-surface-container-highest rounded-full"></div>
 
-        {/* Quick Access Bento Row */}
+        {/* Quick Access Grid */}
         <section className="flex flex-col gap-stack-gap-md">
           <h3 className="font-headline-md text-headline-md text-on-surface font-bold">Quick Access</h3>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 gap-3">
             {/* Documents */}
             <button 
               onClick={() => navigate(`/vehicles/${id}/documents`)}
-              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 flex flex-col items-center justify-center gap-1.5 shadow-[0_4px_12px_rgba(26,60,110,0.04)] hover:bg-surface-container-low active:scale-95 transition-all group"
+              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col items-center justify-center gap-2 shadow-[0_4px_12px_rgba(26,60,110,0.05)] hover:bg-surface-container-low active:scale-95 transition-all group"
             >
-              <div className="w-9 h-9 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors shrink-0">
-                <span className="material-symbols-outlined text-primary text-[20px]">folder_open</span>
+              <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors">
+                <span className="material-symbols-outlined text-primary">folder_open</span>
               </div>
-              <span className="font-label-sm text-[11px] text-on-surface text-center">Docs</span>
+              <span className="font-label-sm text-label-sm text-on-surface text-center">Documents</span>
             </button>
             {/* Service Log */}
             <button 
               onClick={() => navigate(`/vehicles/${id}/service`)}
-              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 flex flex-col items-center justify-center gap-1.5 shadow-[0_4px_12px_rgba(26,60,110,0.04)] hover:bg-surface-container-low active:scale-95 transition-all group"
+              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col items-center justify-center gap-2 shadow-[0_4px_12px_rgba(26,60,110,0.05)] hover:bg-surface-container-low active:scale-95 transition-all group"
             >
-              <div className="w-9 h-9 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors shrink-0">
-                <span className="material-symbols-outlined text-primary text-[20px]">build</span>
+              <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors">
+                <span className="material-symbols-outlined text-primary">build</span>
               </div>
-              <span className="font-label-sm text-[11px] text-on-surface text-center whitespace-nowrap">Service</span>
-            </button>
-            {/* Oil Log */}
-            <button 
-              onClick={() => navigate(`/vehicles/${id}/oil`)}
-              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 flex flex-col items-center justify-center gap-1.5 shadow-[0_4px_12px_rgba(26,60,110,0.04)] hover:bg-surface-container-low active:scale-95 transition-all group"
-            >
-              <div className="w-9 h-9 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors shrink-0">
-                <span className="material-symbols-outlined text-primary text-[20px]">oil_barrel</span>
-              </div>
-              <span className="font-label-sm text-[11px] text-on-surface text-center whitespace-nowrap">Oil</span>
+              <span className="font-label-sm text-label-sm text-on-surface text-center whitespace-nowrap">Service Log</span>
             </button>
             {/* Mileage */}
             <button 
               onClick={() => navigate(`/vehicles/${id}/mileage`)}
-              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 flex flex-col items-center justify-center gap-1.5 shadow-[0_4px_12px_rgba(26,60,110,0.04)] hover:bg-surface-container-low active:scale-95 transition-all group"
+              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col items-center justify-center gap-2 shadow-[0_4px_12px_rgba(26,60,110,0.05)] hover:bg-surface-container-low active:scale-95 transition-all group"
             >
-              <div className="w-9 h-9 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors shrink-0">
-                <span className="material-symbols-outlined text-primary text-[20px]">local_gas_station</span>
+              <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors">
+                <span className="material-symbols-outlined text-primary">local_gas_station</span>
               </div>
-              <span className="font-label-sm text-[11px] text-on-surface text-center">Mileage</span>
+              <span className="font-label-sm text-label-sm text-on-surface text-center">Mileage</span>
+            </button>
+            {/* Odometer Log */}
+            <button 
+              onClick={() => navigate(`/vehicles/${id}/odometer-logs`)}
+              className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 flex flex-col items-center justify-center gap-2 shadow-[0_4px_12px_rgba(26,60,110,0.05)] hover:bg-surface-container-low active:scale-95 transition-all group"
+            >
+              <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center group-hover:bg-primary-fixed-dim transition-colors">
+                <span className="material-symbols-outlined text-primary">speed</span>
+              </div>
+              <span className="font-label-sm text-label-sm text-on-surface text-center">Odometer Log</span>
             </button>
           </div>
         </section>
 
         {/* Upcoming Reminders Section */}
         <section className="flex flex-col gap-stack-gap-md">
-          <div className="flex justify-between items-center">
-            <h3 className="font-headline-md text-headline-md text-on-surface font-bold">Upcoming Reminders</h3>
-          </div>
-          
+          <h3 className="font-headline-md text-headline-md text-on-surface font-bold">Upcoming Reminders</h3>
           <div className="flex flex-col gap-stack-gap-sm">
             {reminders.length === 0 ? (
-              <div className="p-6 bg-surface-container-lowest border border-dashed border-outline-variant rounded-xl text-center shadow-ambient-lvl1 select-none">
-                <span className="material-symbols-outlined text-[36px] text-outline opacity-40 mb-1">notifications_off</span>
-                <span className="block font-label-lg text-label-lg text-primary font-bold">All Reminders Clear</span>
-                <span className="block font-label-sm text-label-sm text-on-surface-variant mt-0.5">Configure reminders in Service or Oil settings.</span>
+              <div className="text-center py-6 px-4 bg-surface-container-low border border-outline-variant/30 rounded-xl select-none">
+                <span className="font-body-md text-body-md text-on-surface-variant font-medium">
+                  All systems green! No pending alerts.
+                </span>
               </div>
             ) : reminders.map((rem) => {
               let bgClass = 'bg-surface-container-lowest border-l-4 border-outline';
@@ -496,7 +532,7 @@ export function VehicleDetail() {
                 onClick={() => { setShowLogSheet(false); navigate(`/vehicles/${id}/puc-history?action=add`); }}
                 className="flex items-center gap-3 p-4 bg-surface-container-lowest border border-outline-variant rounded-xl hover:bg-surface-container-low text-left active:scale-[0.98] transition-all"
               >
-                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full shrink-0">air</span>
+                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full">air</span>
                 <div>
                   <span className="block font-label-lg text-label-lg font-bold">Renew PUC</span>
                   <span className="block font-label-sm text-label-sm text-on-surface-variant">Update pollution clearance status</span>
@@ -507,7 +543,7 @@ export function VehicleDetail() {
                 onClick={() => { setShowLogSheet(false); navigate(`/vehicles/${id}/documents?action=add-insurance`); }}
                 className="flex items-center gap-3 p-4 bg-surface-container-lowest border border-outline-variant rounded-xl hover:bg-surface-container-low text-left active:scale-[0.98] transition-all"
               >
-                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full shrink-0">verified_user</span>
+                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full">verified_user</span>
                 <div>
                   <span className="block font-label-lg text-label-lg font-bold">Update Insurance</span>
                   <span className="block font-label-sm text-label-sm text-on-surface-variant">Renew or update policy expiry date</span>
@@ -518,21 +554,10 @@ export function VehicleDetail() {
                 onClick={() => { setShowLogSheet(false); navigate(`/vehicles/${id}/service?action=add`); }}
                 className="flex items-center gap-3 p-4 bg-surface-container-lowest border border-outline-variant rounded-xl hover:bg-surface-container-low text-left active:scale-[0.98] transition-all"
               >
-                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full shrink-0">build</span>
+                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full">build</span>
                 <div>
                   <span className="block font-label-lg text-label-lg font-bold">Log Maintenance Service</span>
-                  <span className="block font-label-sm text-label-sm text-on-surface-variant">Log general service details &amp; checklist</span>
-                </div>
-              </button>
-
-              <button 
-                onClick={() => { setShowLogSheet(false); navigate(`/vehicles/${id}/oil?action=add`); }}
-                className="flex items-center gap-3 p-4 bg-surface-container-lowest border border-outline-variant rounded-xl hover:bg-surface-container-low text-left active:scale-[0.98] transition-all"
-              >
-                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full shrink-0">oil_barrel</span>
-                <div>
-                  <span className="block font-label-lg text-label-lg font-bold">Log Oil Change</span>
-                  <span className="block font-label-sm text-label-sm text-on-surface-variant">Log engine oil &amp; filter replacement</span>
+                  <span className="block font-label-sm text-label-sm text-on-surface-variant">Log garage service details &amp; checklist</span>
                 </div>
               </button>
 
@@ -540,14 +565,170 @@ export function VehicleDetail() {
                 onClick={() => { setShowLogSheet(false); navigate(`/vehicles/${id}/mileage?action=add`); }}
                 className="flex items-center gap-3 p-4 bg-surface-container-lowest border border-outline-variant rounded-xl hover:bg-surface-container-low text-left active:scale-[0.98] transition-all"
               >
-                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full shrink-0">local_gas_station</span>
+                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full">local_gas_station</span>
                 <div>
                   <span className="block font-label-lg text-label-lg font-bold">Log Fuel &amp; Mileage</span>
                   <span className="block font-label-sm text-label-sm text-on-surface-variant">Add tank full fuel session odometer record</span>
                 </div>
               </button>
+
+              <button 
+                onClick={() => { setShowLogSheet(false); navigate(`/vehicles/${id}/odometer-logs`); }}
+                className="flex items-center gap-3 p-4 bg-surface-container-lowest border border-outline-variant rounded-xl hover:bg-surface-container-low text-left active:scale-[0.98] transition-all"
+              >
+                <span className="material-symbols-outlined text-primary bg-primary-fixed p-2 rounded-full">speed</span>
+                <div>
+                  <span className="block font-label-lg text-label-lg font-bold">Log Odometer Reading</span>
+                  <span className="block font-label-sm text-label-sm text-on-surface-variant">Log odometer value and track usage</span>
+                </div>
+              </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Edit Vehicle Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-primary/40 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="absolute inset-0" onClick={() => setShowEditModal(false)}></div>
+          <form 
+            onSubmit={handleEditVehicle}
+            className="bg-surface text-on-surface w-[320px] rounded-xl p-5 shadow-2xl relative z-10 flex flex-col gap-4 overflow-y-auto max-h-[90vh]"
+          >
+            <div className="flex justify-between items-center border-b border-outline-variant/30 pb-2">
+              <h3 className="font-headline-md text-headline-md text-primary font-bold">Edit Vehicle Details</h3>
+              <button 
+                type="button" 
+                onClick={() => setShowEditModal(false)}
+                className="p-1 rounded-full hover:bg-surface-container-high"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Make &amp; Model</label>
+                <input 
+                  type="text"
+                  value={editModelName}
+                  onChange={(e) => setEditModelName(e.target.value)}
+                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-2.5 font-body-md text-body-md shadow-sm outline-none"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Nickname</label>
+                <input 
+                  type="text"
+                  value={editNickname}
+                  onChange={(e) => setEditNickname(e.target.value)}
+                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-2.5 font-body-md text-body-md shadow-sm outline-none"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Registration Number</label>
+                <input 
+                  type="text"
+                  value={editRegNumber}
+                  onChange={(e) => setEditRegNumber(e.target.value)}
+                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-2.5 font-body-md text-body-md shadow-sm outline-none uppercase"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Vehicle Type</label>
+                <div className="grid grid-cols-2 gap-3 mt-1">
+                   <button
+                    type="button"
+                    onClick={() => setEditType('scooter')}
+                    className={`py-2.5 rounded-xl border flex items-center justify-center gap-2 font-label-md text-label-md font-bold transition-all ${
+                      editType === 'scooter'
+                        ? 'bg-[#131939] text-white border-[#131939] shadow-sm'
+                        : 'bg-surface border-outline-variant text-on-surface-variant hover:bg-surface-container-low'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-lg">two_wheeler</span>
+                    Two Wheeler
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditType('car')}
+                    className={`py-2.5 rounded-xl border flex items-center justify-center gap-2 font-label-md text-label-md font-bold transition-all ${
+                      editType === 'car'
+                        ? 'bg-[#131939] text-white border-[#131939] shadow-sm'
+                        : 'bg-surface border-outline-variant text-on-surface-variant hover:bg-surface-container-low'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-lg">directions_car</span>
+                    Four Wheeler
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Est. Daily Usage (km)</label>
+                <input 
+                  type="number"
+                  value={editEstDaily}
+                  onChange={(e) => setEditEstDaily(e.target.value)}
+                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-2.5 font-body-md text-body-md shadow-sm outline-none"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Est. Weekly Usage (km)</label>
+                <input 
+                  type="number"
+                  value={editEstWeekly}
+                  onChange={(e) => setEditEstWeekly(e.target.value)}
+                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-xl p-2.5 font-body-md text-body-md shadow-sm outline-none"
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="font-label-sm text-label-sm text-on-surface-variant ml-1 font-semibold">Vehicle Color</span>
+                <div className="flex gap-2.5 justify-center">
+                  {colorsList.map((c) => {
+                    const isSelected = editColor === c.hex;
+                    return (
+                      <button
+                        key={c.hex}
+                        type="button"
+                        onClick={() => setEditColor(c.hex)}
+                        className="w-8 h-8 rounded-full border shadow-sm relative transition-transform active:scale-95"
+                        style={{ 
+                          backgroundColor: c.hex,
+                          borderColor: isSelected ? '#131939' : '#c7c5cf',
+                          borderWidth: isSelected ? '3px' : '1px',
+                          transform: isSelected ? 'scale(1.1)' : 'scale(1)'
+                        }}
+                      >
+                        {isSelected && (
+                          <span className="material-symbols-outlined text-white text-[16px] absolute inset-0 m-auto flex items-center justify-center">
+                            check
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {editError && <p className="text-error font-label-sm text-label-sm px-1">{editError}</p>}
+
+            <button 
+              type="submit"
+              disabled={updating}
+              className="w-full bg-[#E8690B] hover:bg-secondary text-on-primary font-label-lg text-label-lg font-bold py-3 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 mt-2"
+            >
+              {updating ? 'Saving...' : 'Save Changes'}
+            </button>
+          </form>
         </div>
       )}
     </div>

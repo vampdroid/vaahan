@@ -139,6 +139,33 @@ const SEED_MILEAGE_LOGS = [
   }
 ];
 
+const SEED_ODOMETER_LOGS = [
+  {
+    id: "odo-1",
+    vehicle_id: "activa-123",
+    value: 12000,
+    logged_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: "odo-2",
+    vehicle_id: "activa-123",
+    value: 12450,
+    logged_at: new Date().toISOString()
+  },
+  {
+    id: "odo-3",
+    vehicle_id: "swift-456",
+    value: 48000,
+    logged_at: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: "odo-4",
+    vehicle_id: "swift-456",
+    value: 48900,
+    logged_at: new Date().toISOString()
+  }
+];
+
 // LocalStorage Helper
 const getLocalData = (key, seed = []) => {
   const data = localStorage.getItem(key);
@@ -162,7 +189,8 @@ class MockQueryBuilder {
       service_logs: "vaahan_service_logs",
       mileage_logs: "vaahan_mileage_logs",
       document_vault: "vaahan_documents",
-      profiles: "vaahan_profiles"
+      profiles: "vaahan_profiles",
+      odometer_logs: "vaahan_odometer_logs"
     };
     const USE_MOCK_DATA = localStorage.getItem("vaahan_use_mock_data") === "true";
     this.seedMap = {
@@ -170,7 +198,8 @@ class MockQueryBuilder {
       service_logs: USE_MOCK_DATA ? [...SEED_SERVICE_LOGS, ...SEED_PUC_LOGS] : [],
       mileage_logs: USE_MOCK_DATA ? SEED_MILEAGE_LOGS : [],
       document_vault: USE_MOCK_DATA ? SEED_DOCUMENTS : [],
-      profiles: [{ id: "mock-user", full_name: "Yash Kukreja", email: "yash.k@example.com", phone: "+91 98765 43210" }]
+      profiles: [{ id: "mock-user", full_name: "Yash Kukreja", email: "yash.k@example.com", phone: "+91 98765 43210" }],
+      odometer_logs: USE_MOCK_DATA ? SEED_ODOMETER_LOGS : []
     };
     
     this.storeKey = this.keyMap[table] || `vaahan_${table}`;

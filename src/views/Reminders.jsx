@@ -3,34 +3,26 @@ import { useNavigate } from 'react-router-dom';
 import supabase from '../services/supabase';
 import TopAppBar from '../components/TopAppBar';
 import BottomNavBar from '../components/BottomNavBar';
+import { useApp } from '../context/AppContext';
 import { formatDistance } from '../services/utils';
 
 export function Reminders() {
   const navigate = useNavigate();
-  const [vehicles, setVehicles] = useState([]);
+  const { vehicles, loadingVehicles, refreshVehicles } = useApp();
   const [reminders, setReminders] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchReminders();
+    // Refresh vehicle list in background
+    refreshVehicles();
   }, []);
 
-  const fetchReminders = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase.from('vehicles').select('*');
-      if (error) throw error;
-      setVehicles(data || []);
-      calculateAllReminders(data || []);
-    } catch (err) {
-      console.error("Error fetching reminders data:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    calculateAllReminders(vehicles);
+  }, [vehicles]);
 
   const calculateAllReminders = (vehiclesList) => {
     const today = new Date();
+    today.setHours(0,0,0,0);
     const list = [];
 
     vehiclesList.forEach(v => {
@@ -93,28 +85,112 @@ export function Reminders() {
       }
 
       // Service
-      if (v.service_due_odometer) {
-        const remainingKm = v.service_due_odometer - v.current_odometer;
-        if (remainingKm <= 0) {
+      const svcType = v.service_reminder_type || 'none';
+      if (svcType !== 'none') {
+        const isOdo = svcType === 'odometer' || svcType === 'both';
+        const isDate = svcType === 'date' || svcType === 'both';
+        let svcOverdue = false;
+        let svcSoon = false;
+        let svcDetail = '';
+
+        if (isOdo && v.service_due_odometer) {
+          const remaining = v.service_due_odometer - v.current_odometer;
+          if (remaining <= 0) {
+            svcOverdue = true;
+            svcDetail = `Overdue by ${formatDistance(Math.abs(remaining))}`;
+          } else if (remaining <= 500) {
+            svcSoon = true;
+            svcDetail = `Due in ${formatDistance(remaining)}`;
+          }
+        }
+        if (isDate && v.service_due_date && !svcOverdue) {
+          const diff = new Date(v.service_due_date) - today;
+          const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+          if (days <= 0) {
+            svcOverdue = true;
+            svcDetail = 'Overdue!';
+          } else if (days <= 15) {
+            svcSoon = true;
+            svcDetail = `Due in ${days} days`;
+          }
+        }
+
+        if (svcOverdue) {
           list.push({
             id: `${v.id}-service`,
             vehicleId: v.id,
             vehicleName: v.nickname || v.model_name,
             regNumber: v.registration_number,
             type: 'service',
-            title: 'Scheduled Service',
-            desc: `Overdue by ${formatDistance(Math.abs(remainingKm))}`,
+            title: 'General Service',
+            desc: svcDetail || 'Overdue!',
             status: 'danger'
           });
-        } else if (remainingKm <= 500) {
+        } else if (svcSoon) {
           list.push({
             id: `${v.id}-service`,
             vehicleId: v.id,
             vehicleName: v.nickname || v.model_name,
             regNumber: v.registration_number,
             type: 'service',
-            title: 'Scheduled Service',
-            desc: `Due in ${formatDistance(remainingKm)}`,
+            title: 'General Service',
+            desc: svcDetail,
+            status: 'warning'
+          });
+        }
+      }
+
+      // Oil
+      const oilType = v.oil_reminder_type || 'none';
+      if (oilType !== 'none') {
+        const isOdo = oilType === 'odometer' || oilType === 'both';
+        const isDate = oilType === 'date' || oilType === 'both';
+        let oilOverdue = false;
+        let oilSoon = false;
+        let oilDetail = '';
+
+        if (isOdo && v.oil_due_odometer) {
+          const remaining = v.oil_due_odometer - v.current_odometer;
+          if (remaining <= 0) {
+            oilOverdue = true;
+            oilDetail = `Overdue by ${formatDistance(Math.abs(remaining))}`;
+          } else if (remaining <= 300) {
+            oilSoon = true;
+            oilDetail = `Due in ${formatDistance(remaining)}`;
+          }
+        }
+        if (isDate && v.oil_due_date && !oilOverdue) {
+          const diff = new Date(v.oil_due_date) - today;
+          const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+          if (days <= 0) {
+            oilOverdue = true;
+            oilDetail = 'Overdue!';
+          } else if (days <= 10) {
+            oilSoon = true;
+            oilDetail = `Due in ${days} days`;
+          }
+        }
+
+        if (oilOverdue) {
+          list.push({
+            id: `${v.id}-oil`,
+            vehicleId: v.id,
+            vehicleName: v.nickname || v.model_name,
+            regNumber: v.registration_number,
+            type: 'oil',
+            title: 'Engine Oil Change',
+            desc: oilDetail || 'Overdue!',
+            status: 'danger'
+          });
+        } else if (oilSoon) {
+          list.push({
+            id: `${v.id}-oil`,
+            vehicleId: v.id,
+            vehicleName: v.nickname || v.model_name,
+            regNumber: v.registration_number,
+            type: 'oil',
+            title: 'Engine Oil Change',
+            desc: oilDetail,
             status: 'warning'
           });
         }
@@ -166,21 +242,35 @@ export function Reminders() {
           details: ['Regular Maintenance', 'General checkup'],
           notes: 'Authorized Service Station'
         });
+      } else if (rem.type === 'oil') {
+        const nextOil = v.current_odometer + 3000;
+        updates = { oil_due_odometer: nextOil };
+        await supabase.from('service_logs').insert({
+          vehicle_id: rem.vehicleId,
+          entry_type: 'oil',
+          date: today.toISOString().split('T')[0],
+          odometer: v.current_odometer,
+          cost: 800,
+          details: ['Engine Oil Replaced', 'Oil Filter Changed'],
+          notes: 'Authorized Service Station'
+        });
       }
 
       await supabase.from('vehicles').update(updates).eq('id', rem.vehicleId);
-      fetchReminders();
+      await refreshVehicles();
     } catch (err) {
       console.error("Error marking reminder done:", err);
     }
   };
+
+  const showLoading = loadingVehicles && vehicles.length === 0;
 
   return (
     <div className="bg-surface text-on-surface w-full max-w-[768px] mx-auto min-h-screen relative flex flex-col pb-[80px] font-body">
       <TopAppBar title="Reminders" showBack={true} />
 
       <main className="flex-1 px-container-margin py-4 flex flex-col gap-4 overflow-y-auto">
-        {loading ? (
+        {showLoading ? (
           <div className="flex-grow flex flex-col items-center justify-center">
             <div className="w-10 h-10 border-4 border-secondary border-t-transparent rounded-full animate-spin"></div>
             <span className="font-label-sm text-label-sm text-on-surface-variant mt-2">Checking alerts...</span>

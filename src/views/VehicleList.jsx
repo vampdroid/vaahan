@@ -4,11 +4,11 @@ import supabase from '../services/supabase';
 import TopAppBar from '../components/TopAppBar';
 import BottomNavBar from '../components/BottomNavBar';
 import { formatDate, formatDistance, getDistanceUnit } from '../services/utils';
+import { useApp } from '../context/AppContext';
 
 export function VehicleList() {
   const navigate = useNavigate();
-  const [vehicles, setVehicles] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { vehicles, loadingVehicles, refreshVehicles } = useApp();
 
   // Quick Odometer Modal State
   const [showOdoModal, setShowOdoModal] = useState(false);
@@ -18,25 +18,9 @@ export function VehicleList() {
   const [odoLoading, setOdoLoading] = useState(false);
 
   useEffect(() => {
-    fetchVehicles();
+    // Refresh vehicle list in background
+    refreshVehicles();
   }, []);
-
-  const fetchVehicles = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('vehicles')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setVehicles(data || []);
-    } catch (err) {
-      console.error("Error fetching vehicles list:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const getStatusBadges = (v) => {
     const today = new Date();
@@ -106,7 +90,7 @@ export function VehicleList() {
       }
     }
 
-    // Normalize label text prefixes if they don't have them
+    // Normalize label text prefixes
     const pLabel = pucStatus.startsWith("PUC:") ? pucStatus : `PUC: ${pucStatus}`;
     const iLabel = insStatus.startsWith("Ins:") ? insStatus : `Ins: ${insStatus}`;
     const sLabel = svcStatus.startsWith("Svc:") ? svcStatus : `Svc: ${svcStatus}`;
@@ -145,14 +129,26 @@ export function VehicleList() {
     setOdoError('');
     try {
       const normalizedOdo = unit === 'mi' ? Math.round(odoNum * 1.60934) : odoNum;
+      
+      // 1. Update vehicle record
       const { error } = await supabase
         .from('vehicles')
         .update({ current_odometer: normalizedOdo })
         .eq('id', selectedVehicleForOdo.id);
 
       if (error) throw error;
+
+      // 2. Log odometer entry
+      await supabase
+        .from('odometer_logs')
+        .insert({
+          vehicle_id: selectedVehicleForOdo.id,
+          value: normalizedOdo,
+          logged_at: new Date().toISOString()
+        });
+
+      await refreshVehicles();
       setShowOdoModal(false);
-      fetchVehicles();
     } catch (err) {
       console.error("Error updating odometer:", err);
       setOdoError(err.message || "Failed to update odometer.");
@@ -160,6 +156,8 @@ export function VehicleList() {
       setOdoLoading(false);
     }
   };
+
+  const showLoading = loadingVehicles && vehicles.length === 0;
 
   return (
     <div className="bg-surface text-on-surface w-full max-w-[768px] mx-auto min-h-screen relative flex flex-col pb-[80px] font-body">
@@ -177,7 +175,7 @@ export function VehicleList() {
       />
 
       <main className="flex-1 px-container-margin py-4 flex flex-col gap-4">
-        {loading ? (
+        {showLoading ? (
           <div className="flex-grow flex flex-col items-center justify-center">
             <div className="w-10 h-10 border-4 border-secondary border-t-transparent rounded-full animate-spin"></div>
             <span className="font-label-sm text-label-sm text-on-surface-variant mt-2">Loading garage...</span>
@@ -223,7 +221,13 @@ export function VehicleList() {
                 >
                   <div className="flex items-start gap-3">
                     {/* Left Avatar */}
-                    <div className="bg-primary-fixed text-primary w-12 h-12 rounded-full flex items-center justify-center shrink-0 shadow-sm">
+                    <div 
+                      className="bg-primary-fixed text-primary w-12 h-12 rounded-full flex items-center justify-center shrink-0 shadow-sm"
+                      style={{
+                        backgroundColor: v.color + '20',
+                        color: v.color || '#131939'
+                      }}
+                    >
                       <span className="material-symbols-outlined text-2xl">
                         {isScooter ? 'two_wheeler' : 'directions_car'}
                       </span>
@@ -231,28 +235,26 @@ export function VehicleList() {
                     
                     {/* Right Info wrapped flex */}
                     <div className="flex-1 min-w-0 flex flex-col gap-1">
-                      <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
-                        <h4 className="font-headline-md text-headline-md text-primary font-bold leading-tight break-words">
-                          {v.nickname || v.model_name}
-                        </h4>
-                        
-                        <div className="flex-shrink-0">
-                          <button 
-                            onClick={(e) => handleOpenOdometerModal(e, v)}
-                            className="flex items-center gap-1.5 bg-surface-container-low border border-outline-variant/30 px-3 py-1 rounded-full hover:bg-surface-container-medium hover:border-secondary/40 active:scale-95 transition-all text-on-surface select-none shadow-sm group"
-                          >
-                            <span className="material-symbols-outlined text-[15px] text-outline group-hover:text-secondary transition-colors">speed</span>
-                            <span className="font-label-sm text-label-sm text-on-surface font-bold whitespace-nowrap">
-                              {formatDistance(v.current_odometer || 0)}
-                            </span>
-                            <span className="material-symbols-outlined text-[12px] text-secondary">edit</span>
-                          </button>
-                        </div>
-                      </div>
+                      <h4 className="font-headline-md text-headline-md text-primary font-bold leading-tight break-words">
+                        {v.nickname || v.model_name}
+                      </h4>
                       
                       <span className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider font-semibold">
                         {v.registration_number}
                       </span>
+
+                      <div className="flex justify-start mt-1.5">
+                        <button 
+                          onClick={(e) => handleOpenOdometerModal(e, v)}
+                          className="flex items-center gap-1.5 bg-surface-container-low border border-outline-variant/30 px-3 py-1 rounded-full hover:bg-surface-container-medium hover:border-secondary/40 active:scale-95 transition-all text-on-surface select-none shadow-sm group"
+                        >
+                          <span className="material-symbols-outlined text-[15px] text-outline group-hover:text-secondary transition-colors">speed</span>
+                          <span className="font-label-sm text-label-sm text-on-surface font-bold whitespace-nowrap">
+                            {formatDistance(v.current_odometer || 0)}
+                          </span>
+                          <span className="material-symbols-outlined text-[12px] text-secondary">edit</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
